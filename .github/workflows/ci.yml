@@ -1,0 +1,75 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with: { go-version-file: network/wpa-supplicant/boot/go.mod }
+      - run: make test
+
+  build:
+    runs-on: ubuntu-24.04
+    needs: unit
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: export amd64 tree for the e2e job
+        run: make local-wpa-supplicant PLATFORM=linux/amd64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wpa-supplicant-amd64
+          path: _out/wpa-supplicant/
+      - name: build both platforms
+        run: make wpa-supplicant
+      - name: login
+        if: github.event_name == 'push'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push
+        if: github.event_name == 'push'
+        run: make wpa-supplicant PUSH=true
+
+  e2e:
+    # The built extension, run as Talos would run it, on a veth pair against
+    # a hostapd wired/MACsec authenticator, with the key in swtpm.
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: wpa-supplicant-amd64
+          path: _out/wpa-supplicant/
+      - name: deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq swtpm swtpm-tools tpm2-tools libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libssl-dev
+      - name: hostapd with the macsec_linux driver (distro builds lack it)
+        run: |
+          curl -sfLO https://w1.fi/releases/hostapd-2.12.tar.gz
+          tar xzf hostapd-2.12.tar.gz && cd hostapd-2.12/hostapd
+          cp defconfig .config
+          printf 'CONFIG_DRIVER_WIRED=y\nCONFIG_DRIVER_MACSEC_LINUX=y\nCONFIG_MACSEC=y\nCONFIG_LIBNL32=y\nCONFIG_EAP_TLS=y\nCONFIG_TLS=openssl\n' >> .config
+          sed -i 's/^CONFIG_DRIVER_NL80211=y/#&/' .config
+          make -j"$(nproc)" hostapd
+          sudo install -m 0755 hostapd /usr/local/bin/hostapd
+      - name: e2e 802.1X (wired)
+        run: sudo MACSEC=0 HOSTAPD=/usr/local/bin/hostapd test/e2e-veth.sh _out/wpa-supplicant/rootfs/usr/local/lib/containers/wpa-supplicant
+      - name: e2e 802.1X + MACsec
+        run: sudo MACSEC=1 HOSTAPD=/usr/local/bin/hostapd test/e2e-veth.sh _out/wpa-supplicant/rootfs/usr/local/lib/containers/wpa-supplicant

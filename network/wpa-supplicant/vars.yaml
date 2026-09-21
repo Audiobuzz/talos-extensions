@@ -1,0 +1,2 @@
+VERSION: "{{ .HOSTAP_VERSION }}-{{ .BUILD_ARG_TAG }}"
+TIER: "extra"

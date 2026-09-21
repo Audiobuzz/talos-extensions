@@ -1,0 +1,10 @@
+version: v1alpha1
+metadata:
+  name: wpa-supplicant
+  version: "{{ .VERSION }}"
+  author: Audiobuzz
+  description: |
+    [{{ .TIER }}] wpa_supplicant for wired IEEE 802.1X (EAP) and MACsec (MKA) on Talos, with a TPM 2.0 key via PKCS#11 (pkcs11-tpm).
+  compatibility:
+    talos:
+      version: ">= v1.14.0"

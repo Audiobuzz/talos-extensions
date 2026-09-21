@@ -1,0 +1,13 @@
+# OpenSSL configuration for the wpa-supplicant extension container.
+# wpa_supplicant loads the pkcs11 provider by name (OSSL_PROVIDER_try_load)
+# before the default provider is auto-loaded, which would make OpenSSL route
+# generic operations, notably the ephemeral ECDHE key generation of the TLS
+# handshake, to the token. The token is read-only, so the handshake would
+# fail. "?provider=default" prefers software for everything that is not the
+# token-resident key; signatures with the TPM key still go to the provider
+# because the key object itself belongs to it.
+openssl_conf = openssl_init
+[openssl_init]
+alg_section = algs
+[algs]
+default_properties = ?provider=default

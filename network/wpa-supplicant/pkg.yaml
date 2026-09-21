@@ -1,0 +1,115 @@
+name: wpa-supplicant
+variant: scratch
+shell: /bin/bash
+dependencies:
+  - stage: base
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/fhs:{{ .BUILD_ARG_PKGS }}"
+    from: /
+    to: /rootfs/usr/local/lib/containers/wpa-supplicant
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/musl:{{ .BUILD_ARG_PKGS }}"
+    from: /usr/lib
+    to: /rootfs/usr/local/lib/containers/wpa-supplicant/usr/lib
+  - image: "{{ .BUILD_ARG_PKGS_PREFIX }}/openssl:{{ .BUILD_ARG_PKGS }}"
+    from: /usr/lib
+    to: /rootfs/usr/local/lib/containers/wpa-supplicant/usr/lib
+steps:
+  - env:
+      GOPATH: /tmp/go
+      CROOT: /rootfs/usr/local/lib/containers/wpa-supplicant
+    cachePaths:
+      - /.cache/go-build
+      - /tmp/go/pkg
+    sources:
+      - url: https://w1.fi/releases/wpa_supplicant-{{ .HOSTAP_VERSION }}.tar.gz
+        destination: hostap.tar.gz
+        sha256: {{ .HOSTAP_SHA256 }}
+        sha512: {{ .HOSTAP_SHA512 }}
+      - url: https://github.com/latchset/pkcs11-provider/archive/refs/tags/v{{ .PKCS11_PROVIDER_VERSION }}.tar.gz
+        destination: pkcs11-provider.tar.gz
+        sha256: {{ .PKCS11_PROVIDER_SHA256 }}
+        sha512: {{ .PKCS11_PROVIDER_SHA512 }}
+      - url: https://github.com/audiobuzz/pkcs11-tpm/archive/refs/tags/v{{ .PKCS11_TPM_VERSION }}.tar.gz
+        destination: pkcs11-tpm.tar.gz
+        sha256: {{ .PKCS11_TPM_SHA256 }}
+        sha512: {{ .PKCS11_TPM_SHA512 }}
+  - network: default
+    prepare:
+      - |
+        mkdir -p hostap pkcs11-provider pkcs11-tpm
+        tar -xzf hostap.tar.gz --strip-components=1 -C hostap
+        tar -xzf pkcs11-provider.tar.gz --strip-components=1 -C pkcs11-provider
+        tar -xzf pkcs11-tpm.tar.gz --strip-components=1 -C pkcs11-tpm
+      - |
+        # Go module downloads happen here, with network; the build step is hermetic.
+        cd pkcs11-tpm && go mod download
+        cd /pkg/boot && go mod download
+  - network: none
+    build:
+      - |
+        # wpa_supplicant + wpa_cli: wired/MACsec only, OpenSSL provider path.
+        cd hostap/wpa_supplicant
+        cp /pkg/files/wpa_supplicant.config .config
+        export PKG_CONFIG_PATH=/usr/lib/pkgconfig
+        make -j $(nproc) wpa_supplicant wpa_cli
+      - |
+        # OpenSSL 3 pkcs11 provider; default module = pkcs11-tpm, overridable
+        # at runtime with PKCS11_PROVIDER_MODULE.
+        cd pkcs11-provider
+        export PKG_CONFIG_PATH=/usr/lib/pkgconfig
+        meson setup build --prefix=/usr --libdir=lib --buildtype=release \
+          -Ddefault_pkcs11_module=/usr/local/lib/pkcs11-tpm.so
+        ninja -C build
+      - |
+        # pkcs11-tpm: Go, cgo, c-shared, against the musl toolchain of the base stage.
+        cd pkcs11-tpm
+        CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+          -buildmode=c-shared -o pkcs11-tpm.so ./cmd/pkcs11-tpm
+      - |
+        # Entrypoint (stdlib only, static).
+        cd /pkg/boot
+        CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+          -o /tmp/wpa-supplicant-boot .
+    install:
+      - |
+        mkdir -p ${CROOT}/usr/sbin ${CROOT}/usr/bin ${CROOT}/usr/local/bin ${CROOT}/usr/local/lib \
+                 ${CROOT}/usr/lib/ossl-modules ${CROOT}/etc/wpa_supplicant ${CROOT}/etc/ssl
+        install -m 0644 /pkg/files/openssl.cnf ${CROOT}/etc/ssl/openssl.cnf
+        install -m 0755 hostap/wpa_supplicant/wpa_supplicant ${CROOT}/usr/sbin/
+        install -m 0755 hostap/wpa_supplicant/wpa_cli ${CROOT}/usr/sbin/
+        install -m 0755 pkcs11-provider/build/src/pkcs11.so ${CROOT}/usr/lib/ossl-modules/
+        install -m 0755 pkcs11-tpm/pkcs11-tpm.so ${CROOT}/usr/local/lib/
+        install -m 0755 /tmp/wpa-supplicant-boot ${CROOT}/usr/local/bin/
+      - |
+        # libnl comes from the build environment (tools image builds it); ship
+        # the shared objects wpa_supplicant links against.
+        cp -a /usr/lib/libnl-3.so.* /usr/lib/libnl-genl-3.so.* /usr/lib/libnl-route-3.so.* ${CROOT}/usr/lib/
+      - |
+        # Drop what the runtime does not need from the copied openssl image.
+        rm -rf ${CROOT}/usr/lib/pkgconfig ${CROOT}/usr/lib/cmake ${CROOT}/usr/lib/*.a ${CROOT}/usr/include
+      - |
+        mkdir -p /rootfs/usr/local/etc/containers
+        cp /pkg/wpa-supplicant.yaml /rootfs/usr/local/etc/containers/
+    test:
+      - |
+        # Every ELF in the container must resolve against the shipped libs.
+        for f in ${CROOT}/usr/sbin/wpa_supplicant ${CROOT}/usr/sbin/wpa_cli ${CROOT}/usr/lib/ossl-modules/pkcs11.so ${CROOT}/usr/local/lib/pkcs11-tpm.so; do
+          echo "== $f"; readelf -d "$f" | grep NEEDED
+        done
+      - |
+        mkdir -p /extensions-validator-rootfs
+        cp -r /rootfs/ /extensions-validator-rootfs/rootfs
+        cp /pkg/manifest.yaml /extensions-validator-rootfs/manifest.yaml
+        /extensions-validator validate --rootfs=/extensions-validator-rootfs --pkg-name="${PKG_NAME}"
+    sbom:
+      outputPath: /rootfs/usr/local/share/spdx/wpa-supplicant.spdx.json
+      name: wpa_supplicant
+      version: "{{ .HOSTAP_VERSION }}"
+      cpes:
+        - cpe:2.3:a:w1.fi:wpa_supplicant:{{ .HOSTAP_VERSION }}:*:*:*:*:*:*:*
+      licenses:
+        - BSD-3-Clause
+finalize:
+  - from: /rootfs
+    to: /rootfs
+  - from: /pkg/manifest.yaml
+    to: /

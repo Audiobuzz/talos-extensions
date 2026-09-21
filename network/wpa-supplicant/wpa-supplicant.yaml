@@ -1,0 +1,38 @@
+name: wpa-supplicant
+# No dependencies on purpose: the service must be able to authenticate the
+# port BEFORE the machine configuration is fetched over the network. Settings
+# arrive through ExtensionServiceConfig (which needs `configuration: true`
+# below); on a first boot supply that document via talos.config.early=.
+depends:
+  - configuration: true
+container:
+  entrypoint: /usr/local/bin/wpa-supplicant-boot
+  environment:
+    - PATH=/usr/sbin:/usr/bin:/usr/local/bin
+    # pkcs11-provider default module; PKCS11_PROVIDER_MODULE overrides.
+    - OPENSSL_MODULES=/usr/lib/ossl-modules
+    # Prefers the default provider for non-token operations (see files/openssl.cnf).
+    - OPENSSL_CONF=/etc/ssl/openssl.cnf
+  security:
+    writeableRootfs: false
+    writeableSysfs: true
+  mounts:
+    # /dev read-only rather than a single node: Talos auto-creates a missing
+    # bind source as a directory, so /dev/tpmrm0 on a TPM-less machine would
+    # become a bogus directory. Device nodes stay usable on a ro bind.
+    - source: /dev
+      destination: /dev
+      type: bind
+      options: [rbind, ro]
+    # Control sockets + the "authorized" marker other services can depend on.
+    - source: /run/wpa_supplicant
+      destination: /run/wpa_supplicant
+      type: bind
+      options: [bind, rw]
+    # Kernel modules, so WPA_MODULES=macsec can be loaded at start.
+    - source: /usr/lib/modules
+      destination: /usr/lib/modules
+      type: bind
+      options: [rbind, ro]
+restart: always
+logToConsole: true

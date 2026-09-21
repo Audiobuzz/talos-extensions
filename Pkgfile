@@ -1,0 +1,29 @@
+# syntax = ghcr.io/siderolabs/bldr:v0.6.3
+
+format: v1alpha2
+
+vars:
+  # Talos base images (must match the Talos release the extension targets;
+  # see pkg/machinery/gendata/data/{pkgs,tools} at that Talos tag).
+  # Overridden per build by --build-arg PKGS/TOOLS in the Makefile.
+
+  # renovate: datasource=github-releases depName=OpenSC/libp11
+  # (unused: the provider path is used instead of the ENGINE path)
+
+  # hostap (wpa_supplicant). https://w1.fi/releases/
+  HOSTAP_VERSION: "2.12"
+  HOSTAP_SHA256: 08e23937e16d0155e55cab2b51f51fbe10d80a1aa91c4e15442645059b737ef6
+  HOSTAP_SHA512: 5e996323fea2a5f6fefe4f2456481b9e8409adb5bf1d7a72d4489f3db2e3a968d6d9fe5cc0959b820f5b18faa330adb1245da98aad49631009609fbd0f447901
+
+  # OpenSSL 3 pkcs11 provider (latchset). Loaded by wpa_supplicant by name.
+  PKCS11_PROVIDER_VERSION: "1.2.0"
+  PKCS11_PROVIDER_SHA256: e244556f0e54b57513937451b244d1b59a3094dd5e23b718b655e06fbb1f89a3
+  PKCS11_PROVIDER_SHA512: f7465224768691d82addfe7af8bcec91d07486319110fe97877be79ddd6e4a8a5822173a546bb976b1d329549e8b745d88c7bc2f55f58c9800927cffd041f8fc
+
+  # pkcs11-tpm: pure-Go PKCS#11 module over a TPM persistent key.
+  PKCS11_TPM_VERSION: "0.1.1"
+  PKCS11_TPM_SHA256: 5df9e8e3143eee58421e197884f566412b7c924e5ea790c4b3a9dc96c91af126
+  PKCS11_TPM_SHA512: 7a428bb7bdfc88b5efcb8d70d01676206db7a0b74f0e7e07cd3bba6c88d246284b43d6803e1367926f3838d3e0538b09217a2e963ad1185000728ed134b9f09f
+
+labels:
+  org.opencontainers.image.source: https://github.com/audiobuzz/talos-extensions
