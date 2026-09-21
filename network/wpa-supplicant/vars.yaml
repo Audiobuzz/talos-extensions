@@ -1,2 +1,6 @@
-VERSION: "{{ .HOSTAP_VERSION }}-{{ .BUILD_ARG_TAG }}"
+# Image tag / manifest version. extensions-validator only accepts
+# "<X.Y.Z>-v<A.B.C>[-N-gHASH][-dirty]" (software semver + repo tag), so
+# hostap's two-component "2.12" is padded to "2.12.0" and TAG must always be
+# a v-tag (the Makefile synthesises v0.0.0-N-gHASH on an untagged tree).
+VERSION: "{{ .HOSTAP_VERSION }}.0-{{ .BUILD_ARG_TAG }}"
 TIER: "extra"

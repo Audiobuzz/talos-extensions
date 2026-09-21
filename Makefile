@@ -2,7 +2,9 @@
 # first line of Pkgfile). Modelled on siderolabs/extensions, trimmed to what
 # this repo needs.
 
-TAG ?= $(shell git describe --tag --always --dirty --match v[0-9]\* 2>/dev/null || echo dev)
+# TAG must be "vA.B.C[-N-gHASH][-dirty]": extensions-validator rejects any
+# other shape. Fall back to v0.0.0-N-gHASH when the repo has no v-tag yet.
+TAG ?= $(shell git describe --tags --dirty --match 'v[0-9]*' 2>/dev/null || echo "v0.0.0-$$(git rev-list --count HEAD 2>/dev/null || echo 0)-g$$(git rev-parse --short=8 HEAD 2>/dev/null || echo 00000000)$$(git diff --quiet 2>/dev/null || echo -dirty)")
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || date +%s)
 
 REGISTRY ?= ghcr.io
