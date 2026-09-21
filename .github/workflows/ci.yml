@@ -27,11 +27,14 @@ jobs:
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: export amd64 tree for the e2e job
-        run: make local-wpa-supplicant PLATFORM=linux/amd64
+        # Tarred because upload-artifact zips files and drops execute bits.
+        run: |
+          make local-wpa-supplicant PLATFORM=linux/amd64
+          tar -C _out/wpa-supplicant -czf wpa-supplicant-amd64.tar.gz .
       - uses: actions/upload-artifact@v7
         with:
           name: wpa-supplicant-amd64
-          path: _out/wpa-supplicant/
+          path: wpa-supplicant-amd64.tar.gz
       - name: build both platforms
         run: make wpa-supplicant
       - name: login
@@ -55,7 +58,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: wpa-supplicant-amd64
-          path: _out/wpa-supplicant/
+      - run: mkdir -p _out/wpa-supplicant && tar -C _out/wpa-supplicant -xzf wpa-supplicant-amd64.tar.gz
       - name: deps
         run: |
           sudo apt-get update -qq
