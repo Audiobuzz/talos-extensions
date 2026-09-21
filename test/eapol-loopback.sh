@@ -37,6 +37,19 @@ openssl x509 -in client.pem -outform DER -out client.der
 tpm2_nvdefine 0x01800100 -C o -s "$(stat -c %s client.der)" -a 'ownerwrite|ownerread|authwrite|authread' -Q
 tpm2_nvwrite 0x01800100 -C o -i client.der -Q
 
+# Any hostap binary built without CONFIG_SMARTCARD loads the OpenSSL pkcs11
+# provider by name; without this preference OpenSSL routes its own software
+# key operations to the (absent or read-only) token. The extension ships the
+# same file; the host-side hostapd needs it too.
+cat > openssl.cnf <<CNF
+openssl_conf = openssl_init
+[openssl_init]
+alg_section = algs
+[algs]
+default_properties = ?provider=default
+CNF
+export OPENSSL_CONF="$W/openssl.cnf"
+
 echo "== hostapd as RADIUS/EAP-TLS server on 127.0.0.1:$RPORT"
 cat > hostapd.conf <<CFG
 interface=lo
@@ -73,17 +86,6 @@ CFG
 export PKCS11_TPM_DEVICE="tcp://127.0.0.1:$PORT" PKCS11_TPM_KEY_HANDLE=0x81000100 PKCS11_TPM_CERT_NV=0x01800100 PKCS11_TPM_DEBUG=1
 OPENSSL_MODULES="$(dirname "$PROVIDER")"
 export PKCS11_PROVIDER_MODULE="$MODULE" OPENSSL_MODULES
-# Prefer the default provider for anything that is not the token key: with
-# the pkcs11 provider loaded first, OpenSSL would otherwise route the
-# ephemeral ECDHE key generation to the token (read-only -> handshake fails).
-cat > openssl.cnf <<CNF
-openssl_conf = openssl_init
-[openssl_init]
-alg_section = algs
-[algs]
-default_properties = ?provider=default
-CNF
-export OPENSSL_CONF="$W/openssl.cnf"
 set +e
 "$EAPOL_TEST" -c supplicant.conf -a 127.0.0.1 -p "$RPORT" -s testing123 -n -t 10 > eapol.log 2>&1
 rc=$?

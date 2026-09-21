@@ -48,6 +48,19 @@ openssl x509 -in client.pem -outform DER -out client.der
 tpm2_nvdefine 0x01800100 -C o -s "$(stat -c %s client.der)" -a 'ownerwrite|ownerread|authwrite|authread' -Q
 tpm2_nvwrite 0x01800100 -C o -i client.der -Q
 
+# Any hostap binary built without CONFIG_SMARTCARD loads the OpenSSL pkcs11
+# provider by name; without this preference OpenSSL routes its own software
+# key operations to the (absent or read-only) token. The extension ships the
+# same file; the host-side hostapd needs it too.
+cat > openssl.cnf <<CNF
+openssl_conf = openssl_init
+[openssl_init]
+alg_section = algs
+[algs]
+default_properties = ?provider=default
+CNF
+export OPENSSL_CONF="$W/openssl.cnf"
+
 echo "== veth pair + hostapd wired authenticator (MACSEC=$MACSEC)"
 ip link add $AP type veth peer name $SUP
 ip link set $AP up; ip link set $SUP up
