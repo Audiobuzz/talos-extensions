@@ -18,8 +18,11 @@
 //	WPA_MODULES    comma-separated kernel modules to load first (best effort)
 //	WPA_DEBUG      any value: pass -d to wpa_supplicant
 //	WPA_EXTRA_ARGS extra wpa_supplicant arguments, whitespace separated
-//	WPA_LD_PRELOAD library to preload into wpa_supplicant; defaults to
-//	               PKCS11_PROVIDER_MODULE when that file exists (see preloadEnv)
+//	WPA_LD_PRELOAD library to preload into wpa_supplicant (normally unset)
+//	TPM_SERVER     path of pkcs11-tpm-server, "" to not run one
+//	               (default /usr/local/bin/pkcs11-tpm-server); it is started and
+//	               supervised alongside wpa_supplicant and listens on
+//	               PKCS11_TPM_SOCKET (default /run/pkcs11-tpm/pkcs11-tpm.sock)
 package main
 
 import (
@@ -80,6 +83,16 @@ func main() {
 	_ = os.Remove(marker)
 	go watchStatus(ctx, iface, marker)
 
+	// The PKCS#11 token runs in its own process: a Go shared object cannot be
+	// loaded into wpa_supplicant on musl (see preloadEnv), so the module in
+	// the supplicant is the C client and pkcs11-tpm-server holds the key.
+	if srv := tpmServerPath(); srv != "" {
+		go supervise(ctx, "pkcs11-tpm-server", func() *exec.Cmd {
+			return exec.CommandContext(ctx, srv, "-socket", tpmSocket())
+		})
+		waitForSocket(ctx, tpmSocket())
+	}
+
 	backoff := time.Second
 	for ctx.Err() == nil {
 		args := []string{"-D" + driver, "-i" + iface, "-c" + conf, "-P" + filepath.Join(runDir, iface+".pid")}
@@ -90,7 +103,7 @@ func main() {
 		log.Printf("starting wpa_supplicant %s", strings.Join(args, " "))
 		cmd := exec.CommandContext(ctx, "wpa_supplicant", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		cmd.Env = preloadEnv(os.Environ())
+		cmd.Env = preloadEnv(withSocket(os.Environ()))
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 		start := time.Now()
 		err := cmd.Run()
@@ -166,19 +179,13 @@ func waitForInterface(ctx context.Context, iface string) error {
 	}
 }
 
-// preloadEnv adds LD_PRELOAD=<PKCS#11 module> for wpa_supplicant. This is a
-// musl requirement, not a preference: a Go c-shared library such as
-// pkcs11-tpm.so uses initial-exec TLS, which musl's dynamic loader only
-// permits for libraries mapped at process start. When OpenSSL's pkcs11
-// provider later dlopen()s the module, musl fails with "initial-exec TLS
-// resolves to dynamic definition". Preloading maps it at start; the
-// provider's dlopen() then returns the already-loaded library. Set
-// WPA_LD_PRELOAD to override, or to "" to disable.
+// preloadEnv adds LD_PRELOAD=<lib> for wpa_supplicant only when
+// WPA_LD_PRELOAD is set. It is not the default: a Go c-shared library such as
+// the in-process pkcs11-tpm.so can neither be dlopen()ed nor preloaded on
+// musl (golang/go#54805), which is why the extension runs pkcs11-tpm-server
+// as a separate process and loads the C client module instead.
 func preloadEnv(env []string) []string {
-	lib, explicit := os.LookupEnv("WPA_LD_PRELOAD")
-	if !explicit {
-		lib = os.Getenv("PKCS11_PROVIDER_MODULE")
-	}
+	lib := os.Getenv("WPA_LD_PRELOAD")
 	if lib == "" {
 		return env
 	}
@@ -193,4 +200,74 @@ func preloadEnv(env []string) []string {
 		}
 	}
 	return append(out, "LD_PRELOAD="+lib)
+}
+
+const defaultTPMServer = "/usr/local/bin/pkcs11-tpm-server"
+
+func tpmServerPath() string {
+	if v, ok := os.LookupEnv("TPM_SERVER"); ok {
+		return v // "" disables
+	}
+	if _, err := os.Stat(defaultTPMServer); err != nil {
+		return ""
+	}
+	return defaultTPMServer
+}
+
+func tpmSocket() string {
+	return envOr("PKCS11_TPM_SOCKET", "/run/pkcs11-tpm/pkcs11-tpm.sock")
+}
+
+// withSocket makes sure the client module inside wpa_supplicant finds the
+// server even when only the default socket path is in use.
+func withSocket(env []string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "PKCS11_TPM_SOCKET=") {
+			return env
+		}
+	}
+	return append(env, "PKCS11_TPM_SOCKET="+tpmSocket())
+}
+
+// supervise runs a helper process and restarts it with backoff until ctx ends.
+func supervise(ctx context.Context, name string, mk func() *exec.Cmd) {
+	backoff := time.Second
+	for ctx.Err() == nil {
+		cmd := mk()
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+		start := time.Now()
+		err := cmd.Run()
+		if ctx.Err() != nil {
+			return
+		}
+		log.Printf("%s exited after %s: %v; restarting in %s", name, time.Since(start).Round(time.Second), err, backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		if time.Since(start) > time.Minute {
+			backoff = time.Second
+		} else if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// waitForSocket gives the server a moment to come up before wpa_supplicant
+// starts; a slow server is not fatal, the client reconnects on demand.
+func waitForSocket(ctx context.Context, path string) {
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		select {
+		case <-time.After(100 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
+	}
+	log.Printf("%s not present yet; continuing", path)
 }

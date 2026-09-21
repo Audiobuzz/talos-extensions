@@ -110,7 +110,7 @@ docker run -d --name wpa-e2e --network host --privileged \
   -e WPA_INTERFACE=$SUP -e WPA_DRIVER=$DRIVER -e WPA_DEBUG=1 \
   -e PKCS11_TPM_DEVICE="tcp://127.0.0.1:$PORT" -e PKCS11_TPM_KEY_HANDLE=0x81000100 -e PKCS11_TPM_CERT_NV=0x01800100 -e PKCS11_TPM_DEBUG=1 \
   -e OPENSSL_MODULES=/usr/lib/ossl-modules -e OPENSSL_CONF=/etc/ssl/openssl.cnf \
-  -e PKCS11_PROVIDER_MODULE=/usr/local/lib/pkcs11-tpm.so -e PKCS11_PROVIDER_DEBUG=file:/dev/stderr,level:2 \
+  -e PKCS11_PROVIDER_MODULE=/usr/local/lib/pkcs11-tpm-client.so -e PKCS11_PROVIDER_DEBUG=file:/dev/stderr,level:2 \
   "$IMG" /usr/local/bin/wpa-supplicant-boot >/dev/null
 
 echo "== waiting for the authorized marker"

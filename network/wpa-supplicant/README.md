@@ -68,9 +68,10 @@ configFiles:
 | `WPA_MODULES` | unset | Comma-separated kernel modules to load first, best effort. |
 | `WPA_DEBUG` | unset | Verbose wpa_supplicant logging. |
 | `WPA_EXTRA_ARGS` | unset | Extra wpa_supplicant arguments. |
-| `WPA_LD_PRELOAD` | `$PKCS11_PROVIDER_MODULE` | Library preloaded into wpa_supplicant; `""` disables. See below. |
+| `TPM_SERVER` | `/usr/local/bin/pkcs11-tpm-server` | The PKCS#11 server run next to wpa_supplicant; `""` disables it. |
+| `PKCS11_TPM_SOCKET` | `/run/pkcs11-tpm/pkcs11-tpm.sock` | Socket between the C client module and the server. |
 | `PKCS11_TPM_*` | see pkcs11-tpm | TPM key handle, certificate NV index, device, labels. |
-| `PKCS11_PROVIDER_MODULE` | `/usr/local/lib/pkcs11-tpm.so` | Use another PKCS#11 module instead. |
+| `PKCS11_PROVIDER_MODULE` | `/usr/local/lib/pkcs11-tpm-client.so` | Use another PKCS#11 module instead (set `TPM_SERVER=""` too). |
 
 Keys in files, PEAP or TTLS with passwords, and MKA pre-shared keys
 (`mka_cak`/`mka_ckn`) all work too; they are plain wpa_supplicant features.
@@ -134,15 +135,18 @@ The TPM key must be a non-restricted signing key at a persistent handle,
 ideally ECC P-256 created with a NULL scheme. Enrolling such a key and
 writing its certificate to NV is deliberately outside this extension.
 
-## Why the module is preloaded
+## Why the token runs in a separate process
 
 Talos userspace is musl, and musl's dynamic loader refuses to `dlopen()` a
-library that uses initial-exec TLS, which every Go c-shared library does
-([golang/go#54805](https://github.com/golang/go/issues/54805)). Loading it at
-process start is allowed, so the entrypoint runs wpa_supplicant with
-`LD_PRELOAD` set to the PKCS#11 module; the pkcs11 provider's later
-`dlopen()` then returns the already-mapped library. A C PKCS#11 module does
-not need this; set `WPA_LD_PRELOAD=""` to turn it off.
+library that uses initial-exec TLS, which every Go c-shared library does;
+preloading such a library crashes the process instead
+([golang/go#54805](https://github.com/golang/go/issues/54805)). So the module
+wpa_supplicant loads is pkcs11-tpm's C client, a 40 KB forwarder with no
+dependency but libc, and the entrypoint runs `pkcs11-tpm-server`, a static
+Go binary that holds the TPM key, next to it. They talk over a Unix socket
+private to the container (mode 0600, peer uid checked). A wpa_supplicant
+compromise can still ask for signatures, which is what a supplicant does,
+but it gains no TPM code or Go runtime in its address space.
 
 ## Why the OpenSSL config
 

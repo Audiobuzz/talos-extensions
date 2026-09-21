@@ -57,13 +57,17 @@ steps:
         cd pkcs11-provider
         export PKG_CONFIG_PATH=/usr/lib/pkgconfig
         meson setup build --prefix=/usr --libdir=lib --buildtype=release \
-          -Ddefault_pkcs11_module=/usr/local/lib/pkcs11-tpm.so
+          -Ddefault_pkcs11_module=/usr/local/lib/pkcs11-tpm-client.so
         ninja -C build
       - |
-        # pkcs11-tpm: Go, cgo, c-shared, against the musl toolchain of the base stage.
+        # pkcs11-tpm in its client/server form: a Go c-shared module cannot be
+        # loaded on musl (golang/go#54805), so wpa_supplicant gets the plain C
+        # client and the token runs in the static Go server.
         cd pkcs11-tpm
-        CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
-          -buildmode=c-shared -o pkcs11-tpm.so ./cmd/pkcs11-tpm
+        CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+          -o pkcs11-tpm-server ./cmd/pkcs11-tpm-server
+        gcc -std=c99 -Wall -O2 -fPIC -shared -Icmd/pkcs11-tpm/include -Iclient \
+          -o pkcs11-tpm-client.so client/pkcs11-tpm-client.c client/functions.c -lpthread
       - |
         # Entrypoint (stdlib only, static).
         cd /pkg/boot
@@ -77,7 +81,8 @@ steps:
         install -m 0755 hostap/wpa_supplicant/wpa_supplicant ${CROOT}/usr/sbin/
         install -m 0755 hostap/wpa_supplicant/wpa_cli ${CROOT}/usr/sbin/
         install -m 0755 pkcs11-provider/build/src/pkcs11.so ${CROOT}/usr/lib/ossl-modules/
-        install -m 0755 pkcs11-tpm/pkcs11-tpm.so ${CROOT}/usr/local/lib/
+        install -m 0755 pkcs11-tpm/pkcs11-tpm-client.so ${CROOT}/usr/local/lib/
+        install -m 0755 pkcs11-tpm/pkcs11-tpm-server ${CROOT}/usr/local/bin/
         install -m 0755 /tmp/wpa-supplicant-boot ${CROOT}/usr/local/bin/
       - |
         # libnl comes from the build environment (tools image builds it); ship
@@ -92,7 +97,7 @@ steps:
     test:
       - |
         # Every ELF in the container must resolve against the shipped libs.
-        for f in ${CROOT}/usr/sbin/wpa_supplicant ${CROOT}/usr/sbin/wpa_cli ${CROOT}/usr/lib/ossl-modules/pkcs11.so ${CROOT}/usr/local/lib/pkcs11-tpm.so; do
+        for f in ${CROOT}/usr/sbin/wpa_supplicant ${CROOT}/usr/sbin/wpa_cli ${CROOT}/usr/lib/ossl-modules/pkcs11.so ${CROOT}/usr/local/lib/pkcs11-tpm-client.so; do
           echo "== $f"; readelf -d "$f" | grep NEEDED
         done
       - |

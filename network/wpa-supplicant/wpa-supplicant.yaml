@@ -10,8 +10,10 @@ container:
   environment:
     - PATH=/usr/sbin:/usr/bin:/usr/local/bin
     - OPENSSL_MODULES=/usr/lib/ossl-modules
-    # PKCS#11 module the OpenSSL pkcs11 provider loads; override for another token.
-    - PKCS11_PROVIDER_MODULE=/usr/local/lib/pkcs11-tpm.so
+    # PKCS#11 module the OpenSSL pkcs11 provider loads: the C client of
+    # pkcs11-tpm-server, which the entrypoint runs alongside wpa_supplicant
+    # (a Go shared object cannot be loaded on musl). Override for another token.
+    - PKCS11_PROVIDER_MODULE=/usr/local/lib/pkcs11-tpm-client.so
     # Prefers the default provider for non-token operations (see files/openssl.cnf).
     - OPENSSL_CONF=/etc/ssl/openssl.cnf
   security:

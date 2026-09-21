@@ -5,14 +5,17 @@
 # through pkcs11-provider -> pkcs11-tpm.so. Success == a real EAP-TLS
 # handshake with the private-key operation performed in the (software) TPM.
 #
-# Usage: eapol-tls-test.sh <hostap build dir> <pkcs11-tpm.so> [pkcs11 provider .so]
+# Usage: eapol-loopback.sh <hostap build dir> <pkcs11 module .so> [pkcs11 provider .so]
+#   With SERVER=<path to pkcs11-tpm-server> the module is the C client and the
+#   token runs in the server over a Unix socket (the musl/Talos arrangement).
 set -euo pipefail
 HOSTAP=$(realpath "$1"); MODULE=$(realpath "$2")
+SERVER=${SERVER:+$(realpath "$SERVER")}
 PROVIDER=${3:-$({ ls /usr/lib/*/ossl-modules/pkcs11.so /usr/lib64/ossl-modules/pkcs11.so /usr/lib/ossl-modules/pkcs11.so 2>/dev/null || true; } | head -1)}
 EAPOL_TEST=${EAPOL_TEST:-$HOSTAP/eapol_test}
 HOSTAPD=${HOSTAPD:-hostapd}
 W=$(mktemp -d); PORT=${SWTPM_PORT:-2351}; RPORT=${RADIUS_PORT:-18120}
-trap 'kill ${SWTPM_PID:-} ${HOSTAPD_PID:-} 2>/dev/null || true; rm -rf "$W"' EXIT
+trap 'kill ${SWTPM_PID:-} ${HOSTAPD_PID:-} ${SERVER_PID:-} 2>/dev/null || true; rm -rf "$W"' EXIT
 cd "$W"
 
 echo "== test CA, RADIUS server cert"
@@ -84,6 +87,11 @@ network={
 }
 CFG
 export PKCS11_TPM_DEVICE="tcp://127.0.0.1:$PORT" PKCS11_TPM_KEY_HANDLE=0x81000100 PKCS11_TPM_CERT_NV=0x01800100 PKCS11_TPM_DEBUG=1
+if [ -n "$SERVER" ]; then
+  export PKCS11_TPM_SOCKET="$W/p11.sock"
+  "$SERVER" -socket "$PKCS11_TPM_SOCKET" &
+  SERVER_PID=$!; sleep 0.5; kill -0 $SERVER_PID || { echo "pkcs11-tpm-server died"; exit 1; }
+fi
 OPENSSL_MODULES="$(dirname "$PROVIDER")"
 export PKCS11_PROVIDER_MODULE="$MODULE" OPENSSL_MODULES
 set +e
