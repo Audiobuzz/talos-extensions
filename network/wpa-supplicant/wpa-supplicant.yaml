@@ -9,8 +9,9 @@ container:
   entrypoint: /usr/local/bin/wpa-supplicant-boot
   environment:
     - PATH=/usr/sbin:/usr/bin:/usr/local/bin
-    # pkcs11-provider default module; PKCS11_PROVIDER_MODULE overrides.
     - OPENSSL_MODULES=/usr/lib/ossl-modules
+    # PKCS#11 module the OpenSSL pkcs11 provider loads; override for another token.
+    - PKCS11_PROVIDER_MODULE=/usr/local/lib/pkcs11-tpm.so
     # Prefers the default provider for non-token operations (see files/openssl.cnf).
     - OPENSSL_CONF=/etc/ssl/openssl.cnf
   security:
