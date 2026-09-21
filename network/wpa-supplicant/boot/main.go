@@ -18,6 +18,8 @@
 //	WPA_MODULES    comma-separated kernel modules to load first (best effort)
 //	WPA_DEBUG      any value: pass -d to wpa_supplicant
 //	WPA_EXTRA_ARGS extra wpa_supplicant arguments, whitespace separated
+//	WPA_LD_PRELOAD library to preload into wpa_supplicant; defaults to
+//	               PKCS11_PROVIDER_MODULE when that file exists (see preloadEnv)
 package main
 
 import (
@@ -88,6 +90,7 @@ func main() {
 		log.Printf("starting wpa_supplicant %s", strings.Join(args, " "))
 		cmd := exec.CommandContext(ctx, "wpa_supplicant", args...)
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		cmd.Env = preloadEnv(os.Environ())
 		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 		start := time.Now()
 		err := cmd.Run()
@@ -161,4 +164,33 @@ func waitForInterface(ctx context.Context, iface string) error {
 			return fmt.Errorf("interrupted while waiting for %s", iface)
 		}
 	}
+}
+
+// preloadEnv adds LD_PRELOAD=<PKCS#11 module> for wpa_supplicant. This is a
+// musl requirement, not a preference: a Go c-shared library such as
+// pkcs11-tpm.so uses initial-exec TLS, which musl's dynamic loader only
+// permits for libraries mapped at process start. When OpenSSL's pkcs11
+// provider later dlopen()s the module, musl fails with "initial-exec TLS
+// resolves to dynamic definition". Preloading maps it at start; the
+// provider's dlopen() then returns the already-loaded library. Set
+// WPA_LD_PRELOAD to override, or to "" to disable.
+func preloadEnv(env []string) []string {
+	lib, explicit := os.LookupEnv("WPA_LD_PRELOAD")
+	if !explicit {
+		lib = os.Getenv("PKCS11_PROVIDER_MODULE")
+	}
+	if lib == "" {
+		return env
+	}
+	if _, err := os.Stat(lib); err != nil {
+		log.Printf("not preloading %s: %v", lib, err)
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "LD_PRELOAD=") && !strings.HasPrefix(kv, "WPA_LD_PRELOAD=") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "LD_PRELOAD="+lib)
 }

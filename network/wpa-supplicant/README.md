@@ -68,6 +68,7 @@ configFiles:
 | `WPA_MODULES` | unset | Comma-separated kernel modules to load first, best effort. |
 | `WPA_DEBUG` | unset | Verbose wpa_supplicant logging. |
 | `WPA_EXTRA_ARGS` | unset | Extra wpa_supplicant arguments. |
+| `WPA_LD_PRELOAD` | `$PKCS11_PROVIDER_MODULE` | Library preloaded into wpa_supplicant; `""` disables. See below. |
 | `PKCS11_TPM_*` | see pkcs11-tpm | TPM key handle, certificate NV index, device, labels. |
 | `PKCS11_PROVIDER_MODULE` | `/usr/local/lib/pkcs11-tpm.so` | Use another PKCS#11 module instead. |
 
@@ -132,6 +133,16 @@ depends:
 The TPM key must be a non-restricted signing key at a persistent handle,
 ideally ECC P-256 created with a NULL scheme. Enrolling such a key and
 writing its certificate to NV is deliberately outside this extension.
+
+## Why the module is preloaded
+
+Talos userspace is musl, and musl's dynamic loader refuses to `dlopen()` a
+library that uses initial-exec TLS, which every Go c-shared library does
+([golang/go#54805](https://github.com/golang/go/issues/54805)). Loading it at
+process start is allowed, so the entrypoint runs wpa_supplicant with
+`LD_PRELOAD` set to the PKCS#11 module; the pkcs11 provider's later
+`dlopen()` then returns the already-mapped library. A C PKCS#11 module does
+not need this; set `WPA_LD_PRELOAD=""` to turn it off.
 
 ## Why the OpenSSL config
 
